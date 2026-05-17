@@ -44,7 +44,7 @@ func main() {
 	flag.StringVar(&subURL, "url", "", "SSR subscription URL")
 	flag.StringVar(&inputFile, "input", "", "local subscription text file, optional")
 	flag.StringVar(&outputFile, "output", "./config/config.yaml", "output mihomo config.yaml")
-	flag.IntVar(&mixedPort, "mixed-port", 7890, "mihomo mixed-port")
+	flag.IntVar(&mixedPort, "mixed-port", 1087, "mihomo mixed-port")
 	flag.StringVar(&apiAddr, "api", "127.0.0.1:9090", "mihomo external-controller address")
 	flag.StringVar(&groupName, "group", "PROXY", "mihomo select proxy group name")
 	flag.BoolVar(&listOnly, "list", false, "only list parsed node names, do not write config")

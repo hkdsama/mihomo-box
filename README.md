@@ -102,7 +102,7 @@ chmod +x bin/mihomo-darwin-arm64
 ## 默认端口
 
 ```text
-mixed-port: 127.0.0.1:7890
+mixed-port: 127.0.0.1:1087
 external-controller: 127.0.0.1:9090
 proxy group: PROXY
 ```
