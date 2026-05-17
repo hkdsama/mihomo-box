@@ -1,0 +1,24 @@
+# macOS / editor noise
+.DS_Store
+**/.DS_Store
+.vscode/
+
+# Local runtime config and state
+config/config.yaml
+config/cache.db
+data/
+logs/
+service/
+
+# Downloaded archives
+archives/
+*.gz
+
+# Downloaded mihomo kernels
+bin/mihomo
+bin/mihomo-darwin-arm64
+bin/mihomo-linux-amd64-v3
+
+# Locally built Go tools
+bin/ssr_2_mihomo
+bin/mihomo_ctl

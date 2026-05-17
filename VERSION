@@ -1,0 +1,3 @@
+mihomo-box-macos package: 0.1.0
+Target: macOS primary; Linux kernel fetch supported
+Default mihomo version for fetch script: v1.19.25
