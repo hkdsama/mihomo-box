@@ -2,13 +2,15 @@
 set -euo pipefail
 
 BASE_DIR="$(cd "$(dirname "$0")/.." && pwd)"
+OS_NAME="$(uname -s)"
+ARCH_NAME="$(uname -m)"
 CONFIG_DIR="$BASE_DIR/config"
 DATA_DIR="$BASE_DIR/data"
 LOG_DIR="$BASE_DIR/logs"
 SERVICE_DIR="$BASE_DIR/service"
 CONFIG_FILE="$CONFIG_DIR/config.yaml"
 SUB_FILE="$DATA_DIR/subscription.url"
-case "$(uname -s):$(uname -m)" in
+case "$OS_NAME:$ARCH_NAME" in
   Darwin:arm64|Darwin:aarch64) MIHOMO_BIN="$BASE_DIR/bin/mihomo-darwin-arm64" ;;
   Linux:x86_64|Linux:amd64) MIHOMO_BIN="$BASE_DIR/bin/mihomo-linux-amd64-v3" ;;
   *) MIHOMO_BIN="$BASE_DIR/bin/mihomo" ;;
@@ -18,6 +20,9 @@ SSR_CONVERTER_SRC="$BASE_DIR/cmd/ssr_2_mihomo/main.go"
 MIHOMO_CTL_BIN="$BASE_DIR/bin/mihomo_ctl"
 MIHOMO_CTL_SRC="$BASE_DIR/cmd/mihomo_ctl/main.go"
 PLIST="$HOME/Library/LaunchAgents/com.local.mihomo.box.plist"
+SYSTEMD_SERVICE="$HOME/.config/systemd/user/mihomo-box.service"
+PROXY_ENV_DIR="$HOME/.config/mihomo-box"
+PROXY_ENV_FILE="$PROXY_ENV_DIR/proxy.env"
 API="http://127.0.0.1:9090"
 GROUP="PROXY"
 PORT="1087"
@@ -31,6 +36,10 @@ small_line(){ printf '%*s\n' "${COLUMNS:-72}" '' | tr ' ' '-'; }
 pause(){ echo; read -r -p "按 Enter 返回菜单..." _; }
 
 network_service() {
+  if [[ "$OS_NAME" != "Darwin" ]]; then
+    echo "CLI"
+    return
+  fi
   local iface service
   iface="$(route get default 2>/dev/null | awk '/interface:/{print $2; exit}')"
   if [[ -n "${iface:-}" ]]; then
@@ -45,9 +54,16 @@ NET_SERVICE="${MIHOMO_NET_SERVICE:-$(network_service)}"
 
 check_env() {
   echo "工作目录: $BASE_DIR"
-  echo "网络服务: $NET_SERVICE"
+  echo "平台: $OS_NAME/$ARCH_NAME"
+  echo "代理环境: $NET_SERVICE"
   echo
-  for c in curl networksetup launchctl awk sed; do
+  local commands=(curl awk sed)
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    commands+=(networksetup launchctl)
+  elif [[ "$OS_NAME" == "Linux" ]]; then
+    commands+=(systemctl journalctl)
+  fi
+  for c in "${commands[@]}"; do
     if command -v "$c" >/dev/null 2>&1; then echo -e "${GREEN}OK${NC} $c"; else echo -e "${RED}缺少${NC} $c"; fi
   done
   if [[ -x "$SSR_CONVERTER_BIN" ]]; then
@@ -56,7 +72,7 @@ check_env() {
     echo -e "${GREEN}OK${NC} Go 工具链，可直接运行: $SSR_CONVERTER_SRC"
   else
     echo -e "${YELLOW}缺少 Go SSR 转换器${NC}"
-    echo "可在 macOS 上执行: go build -o bin/ssr_2_mihomo cmd/ssr_2_mihomo/main.go"
+    echo "可执行: go build -o bin/ssr_2_mihomo cmd/ssr_2_mihomo/main.go"
   fi
   if [[ -x "$MIHOMO_CTL_BIN" ]]; then
     echo -e "${GREEN}OK${NC} Go 菜单辅助工具: $MIHOMO_CTL_BIN"
@@ -64,7 +80,7 @@ check_env() {
     echo -e "${GREEN}OK${NC} Go 工具链，可直接运行: $MIHOMO_CTL_SRC"
   else
     echo -e "${YELLOW}缺少 Go 菜单辅助工具${NC}"
-    echo "可在 macOS 上执行: go build -o bin/mihomo_ctl cmd/mihomo_ctl/main.go"
+    echo "可执行: go build -o bin/mihomo_ctl cmd/mihomo_ctl/main.go"
   fi
   if [[ -x "$MIHOMO_BIN" ]]; then "$MIHOMO_BIN" -v || true; else echo -e "${YELLOW}未找到内核: $MIHOMO_BIN${NC}"; echo "可执行: ./bin/fetch-mihomo.sh"; fi
 }
@@ -86,7 +102,7 @@ run_ssr_converter() {
     return
   fi
   echo -e "${RED}未找到 Go SSR 转换器${NC}"
-  echo "请先在 macOS 上执行:"
+  echo "请先执行:"
   echo "  go build -o bin/ssr_2_mihomo cmd/ssr_2_mihomo/main.go"
   return 1
 }
@@ -107,7 +123,7 @@ run_mihomo_ctl() {
     return
   fi
   echo -e "${RED}未找到 Go 菜单辅助工具${NC}" >&2
-  echo "请先在 macOS 上执行:" >&2
+  echo "请先执行:" >&2
   echo "  go build -o bin/mihomo_ctl cmd/mihomo_ctl/main.go" >&2
   return 1
 }
@@ -124,7 +140,7 @@ update_subscription() {
   run_ssr_converter "$(cat "$SUB_FILE")"
 }
 
-write_plist() {
+write_launchd_plist() {
   if [[ ! -x "$MIHOMO_BIN" ]]; then echo -e "${RED}未找到 mihomo 内核: $MIHOMO_BIN${NC}"; return 1; fi
   if [[ ! -f "$CONFIG_FILE" ]]; then cp "$CONFIG_DIR/config.yaml.example" "$CONFIG_FILE"; fi
   mkdir -p "$HOME/Library/LaunchAgents"
@@ -150,18 +166,140 @@ write_plist() {
 PLIST
 }
 
-start_service(){ write_plist; launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true; launchctl bootstrap "gui/$(id -u)" "$PLIST"; launchctl enable "gui/$(id -u)/com.local.mihomo.box"; launchctl kickstart -k "gui/$(id -u)/com.local.mihomo.box"; echo -e "${GREEN}Mihomo 服务已启动${NC}"; }
-stop_service(){ launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true; echo -e "${GREEN}Mihomo 服务已停止${NC}"; }
+write_systemd_service() {
+  if [[ ! -x "$MIHOMO_BIN" ]]; then echo -e "${RED}未找到 mihomo 内核: $MIHOMO_BIN${NC}"; return 1; fi
+  if [[ ! -f "$CONFIG_FILE" ]]; then cp "$CONFIG_DIR/config.yaml.example" "$CONFIG_FILE"; fi
+  mkdir -p "$(dirname "$SYSTEMD_SERVICE")"
+  cat > "$SYSTEMD_SERVICE" <<SERVICE
+[Unit]
+Description=mihomo-box user service
+After=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=$BASE_DIR
+ExecStart=$MIHOMO_BIN -d $CONFIG_DIR
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=default.target
+SERVICE
+}
+
+start_service() {
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    write_launchd_plist
+    launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
+    launchctl bootstrap "gui/$(id -u)" "$PLIST"
+    launchctl enable "gui/$(id -u)/com.local.mihomo.box"
+    launchctl kickstart -k "gui/$(id -u)/com.local.mihomo.box"
+  elif [[ "$OS_NAME" == "Linux" ]]; then
+    write_systemd_service
+    systemctl --user daemon-reload
+    systemctl --user enable --now mihomo-box.service
+  else
+    echo -e "${RED}暂不支持当前系统: $OS_NAME${NC}"
+    return 1
+  fi
+  echo -e "${GREEN}Mihomo 服务已启动${NC}"
+}
+
+stop_service() {
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
+  elif [[ "$OS_NAME" == "Linux" ]]; then
+    systemctl --user disable --now mihomo-box.service >/dev/null 2>&1 || true
+  fi
+  echo -e "${GREEN}Mihomo 服务已停止${NC}"
+}
+
 restart_service(){ stop_service; sleep 1; start_service; }
 
-proxy_on(){ networksetup -setwebproxy "$NET_SERVICE" 127.0.0.1 "$PORT"; networksetup -setsecurewebproxy "$NET_SERVICE" 127.0.0.1 "$PORT"; networksetup -setsocksfirewallproxy "$NET_SERVICE" 127.0.0.1 "$PORT"; networksetup -setwebproxystate "$NET_SERVICE" on; networksetup -setsecurewebproxystate "$NET_SERVICE" on; networksetup -setsocksfirewallproxystate "$NET_SERVICE" on; echo -e "${GREEN}系统代理已打开: $NET_SERVICE -> 127.0.0.1:$PORT${NC}"; }
-proxy_off(){ networksetup -setwebproxystate "$NET_SERVICE" off; networksetup -setsecurewebproxystate "$NET_SERVICE" off; networksetup -setsocksfirewallproxystate "$NET_SERVICE" off; echo -e "${GREEN}系统代理已关闭: $NET_SERVICE${NC}"; }
+ensure_linux_proxy_source() {
+  local marker="# mihomo-box proxy env"
+  local line="[ -f \"$PROXY_ENV_FILE\" ] && . \"$PROXY_ENV_FILE\""
+  local rc
+  for rc in "$HOME/.bashrc" "$HOME/.profile"; do
+    [[ -f "$rc" ]] || touch "$rc"
+    if ! grep -F "$PROXY_ENV_FILE" "$rc" >/dev/null 2>&1; then
+      {
+        echo
+        echo "$marker"
+        echo "$line"
+      } >> "$rc"
+    fi
+  done
+}
+
+proxy_on() {
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    networksetup -setwebproxy "$NET_SERVICE" 127.0.0.1 "$PORT"
+    networksetup -setsecurewebproxy "$NET_SERVICE" 127.0.0.1 "$PORT"
+    networksetup -setsocksfirewallproxy "$NET_SERVICE" 127.0.0.1 "$PORT"
+    networksetup -setwebproxystate "$NET_SERVICE" on
+    networksetup -setsecurewebproxystate "$NET_SERVICE" on
+    networksetup -setsocksfirewallproxystate "$NET_SERVICE" on
+    echo -e "${GREEN}系统代理已打开: $NET_SERVICE -> 127.0.0.1:$PORT${NC}"
+    return
+  fi
+  if [[ "$OS_NAME" == "Linux" ]]; then
+    mkdir -p "$PROXY_ENV_DIR"
+    cat > "$PROXY_ENV_FILE" <<PROXY
+export http_proxy="http://127.0.0.1:$PORT"
+export https_proxy="http://127.0.0.1:$PORT"
+export all_proxy="socks5h://127.0.0.1:$PORT"
+export HTTP_PROXY="\$http_proxy"
+export HTTPS_PROXY="\$https_proxy"
+export ALL_PROXY="\$all_proxy"
+export no_proxy="localhost,127.0.0.1,::1"
+export NO_PROXY="\$no_proxy"
+PROXY
+    ensure_linux_proxy_source
+    echo -e "${GREEN}命令行代理已打开: 127.0.0.1:$PORT${NC}"
+    echo "新打开的 terminal 会自动生效；当前 terminal 可执行："
+    echo "  source \"$PROXY_ENV_FILE\""
+    return
+  fi
+  echo -e "${RED}暂不支持当前系统: $OS_NAME${NC}"
+}
+
+proxy_off() {
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    networksetup -setwebproxystate "$NET_SERVICE" off
+    networksetup -setsecurewebproxystate "$NET_SERVICE" off
+    networksetup -setsocksfirewallproxystate "$NET_SERVICE" off
+    echo -e "${GREEN}系统代理已关闭: $NET_SERVICE${NC}"
+    return
+  fi
+  if [[ "$OS_NAME" == "Linux" ]]; then
+    mkdir -p "$PROXY_ENV_DIR"
+    : > "$PROXY_ENV_FILE"
+    echo -e "${GREEN}命令行代理已关闭${NC}"
+    echo "新打开的 terminal 会自动生效；当前 terminal 可执行："
+    echo "  unset http_proxy https_proxy all_proxy HTTP_PROXY HTTPS_PROXY ALL_PROXY"
+    return
+  fi
+  echo -e "${RED}暂不支持当前系统: $OS_NAME${NC}"
+}
 
 api_ok(){ curl -s --max-time 2 "$API/proxies/$GROUP" >/dev/null 2>&1; }
 
-service_ok(){ launchctl print "gui/$(id -u)/com.local.mihomo.box" >/dev/null 2>&1; }
+service_ok() {
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    launchctl print "gui/$(id -u)/com.local.mihomo.box" >/dev/null 2>&1
+  elif [[ "$OS_NAME" == "Linux" ]]; then
+    systemctl --user is-active --quiet mihomo-box.service >/dev/null 2>&1
+  else
+    return 1
+  fi
+}
 
 web_proxy_enabled() {
+  if [[ "$OS_NAME" != "Darwin" ]]; then
+    if [[ -s "$PROXY_ENV_FILE" ]]; then echo "Yes"; else echo "No"; fi
+    return
+  fi
   local value
   value="$(networksetup -getwebproxy "$NET_SERVICE" 2>/dev/null | awk -F': ' '/^Enabled:/{print $2; found=1; exit} END{if (!found) print "No"}' || true)"
   echo "${value:-No}"
@@ -197,7 +335,11 @@ status_bar() {
   node="$(current_node || true)"
 
   echo -e "mihomo 服务：$service_text"
-  echo -e "macOS 系统代理：$proxy_text"
+  if [[ "$OS_NAME" == "Linux" ]]; then
+    echo -e "命令行代理：$proxy_text"
+  else
+    echo -e "macOS 系统代理：$proxy_text"
+  fi
   echo -e "当前站点：${YELLOW}${node}${NC}"
 }
 
@@ -220,32 +362,45 @@ select_node() {
 status() {
   echo "工作目录: $BASE_DIR"
   echo "配置文件: $CONFIG_FILE"
-  echo "网络服务: $NET_SERVICE"
+  echo "平台: $OS_NAME/$ARCH_NAME"
+  echo "代理环境: $NET_SERVICE"
   echo "API: $API"
   echo
   echo -e "${BLUE}服务:${NC}"
   if service_ok; then echo -e "${GREEN}运行中${NC}"; else echo -e "${YELLOW}未运行${NC}"; fi
   echo
-  echo -e "${BLUE}HTTP 代理:${NC}"
-  networksetup -getwebproxy "$NET_SERVICE" || true
+  echo -e "${BLUE}代理:${NC}"
+  if [[ "$OS_NAME" == "Darwin" ]]; then
+    networksetup -getwebproxy "$NET_SERVICE" || true
+  elif [[ -s "$PROXY_ENV_FILE" ]]; then
+    cat "$PROXY_ENV_FILE"
+  else
+    echo "未开启"
+  fi
   echo
   echo -e "${BLUE}当前节点:${NC}"
   current_node || true
 }
 
-logs(){ echo "stderr:"; tail -n 60 "$LOG_DIR/stderr.log" 2>/dev/null || echo "暂无"; echo; echo "stdout:"; tail -n 20 "$LOG_DIR/stdout.log" 2>/dev/null || echo "暂无"; }
+logs(){
+  if [[ "$OS_NAME" == "Linux" ]]; then
+    journalctl --user -u mihomo-box.service -n 80 --no-pager 2>/dev/null || echo "暂无"
+    return
+  fi
+  echo "stderr:"; tail -n 60 "$LOG_DIR/stderr.log" 2>/dev/null || echo "暂无"; echo; echo "stdout:"; tail -n 20 "$LOG_DIR/stdout.log" 2>/dev/null || echo "暂无"
+}
 edit_config(){ ${EDITOR:-nano} "$CONFIG_FILE"; }
 open_dir(){ open "$BASE_DIR"; }
 
 while true; do
   clear 2>/dev/null || true
   line
-  echo -e "${GREEN}Mihomo SSR macOS 管理器${NC}"
+  echo -e "${GREEN}Mihomo SSR 管理器${NC}"
   line
   status_bar
   small_line
   echo "目录: $BASE_DIR"
-  echo "网络: $NET_SERVICE"
+  echo "平台: $OS_NAME/$ARCH_NAME"
   line
   echo "1. 检查环境"
   echo "2. 导入 SSR 订阅链接，并生成配置（Go）"
@@ -253,8 +408,13 @@ while true; do
   echo "4. 启动 Mihomo 服务"
   echo "5. 停止 Mihomo 服务"
   echo "6. 重启 Mihomo 服务"
-  echo "7. 打开 macOS 系统代理"
-  echo "8. 关闭 macOS 系统代理"
+  if [[ "$OS_NAME" == "Linux" ]]; then
+    echo "7. 打开命令行代理"
+    echo "8. 关闭命令行代理"
+  else
+    echo "7. 打开 macOS 系统代理"
+    echo "8. 关闭 macOS 系统代理"
+  fi
   echo "9. 选择代理站点 / 节点"
   echo "10. 刷新状态"
   echo "11. 查看日志"

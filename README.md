@@ -1,6 +1,6 @@
-# mihomo-box-macos
+# mihomo-box
 
-一个不依赖 Homebrew 的 macOS 命令行 Mihomo 管理包。
+一个面向 macOS 和 Ubuntu 命令行环境的 Mihomo 管理包。
 
 默认策略：
 
@@ -8,12 +8,12 @@
 2. `bin/ssr_2_mihomo` 是主力转换器，由 `cmd/ssr_2_mihomo/main.go` 构建。
 3. `bin/mihomo_ctl` 是菜单 JSON/API 辅助工具，由 `cmd/mihomo_ctl/main.go` 构建。
 4. `bin/backup/ssr_to_mihomo.py` 只作为旧版备份，不在菜单流程中调用。
-5. 当前菜单仍是 Bash 脚本，负责 macOS 系统命令编排。
+5. 当前菜单仍是 Bash 脚本，按平台编排 macOS 或 Ubuntu CLI 命令。
 
 ## 目录结构
 
 ```text
-mihomo-box-macos/
+mihomo-box/
 ├── bin/
 │   ├── mihomo-tui                  # Bash 菜单入口
 │   ├── fetch-mihomo.sh              # 下载 mihomo 内核，默认 mac，支持 linux 参数
@@ -39,11 +39,11 @@ mihomo-box-macos/
 └── README.md
 ```
 
-## 第一次使用
+## macOS 第一次使用
 
 ```bash
-tar -xzf mihomo-box-macos.tar.gz
-cd mihomo-box-macos
+tar -xzf mihomo-box.tar.gz
+cd mihomo-box
 
 ./bin/fetch-mihomo.sh
 ./install.sh
@@ -74,7 +74,7 @@ go build -o bin/ssr_2_mihomo cmd/ssr_2_mihomo/main.go
 go build -o bin/mihomo_ctl cmd/mihomo_ctl/main.go
 ```
 
-如果已经提前下载了 mihomo 内核，可以直接放到：
+如果 macOS 已经提前下载了 mihomo 内核，可以直接放到：
 
 ```text
 bin/mihomo-darwin-arm64
@@ -88,13 +88,49 @@ chmod +x bin/mihomo-darwin-arm64
 ./bin/mihomo-tui
 ```
 
+## Ubuntu 命令行使用
+
+适合无图形界面的 Ubuntu，只配置当前用户，不影响其他用户。
+
+```bash
+./bin/fetch-mihomo.sh linux
+./install.sh
+./bin/mihomo-tui
+```
+
+Ubuntu 下菜单里的服务管理使用 `systemd --user`：
+
+```text
+systemctl --user start/stop/restart mihomo-box.service
+```
+
+“打开命令行代理”不会修改桌面设置，也不会影响其他用户。它会写入：
+
+```text
+~/.config/mihomo-box/proxy.env
+```
+
+并在当前用户的 `~/.bashrc` 和 `~/.profile` 里加入 source 入口。新打开的 terminal 会自动获得：
+
+```text
+http_proxy=http://127.0.0.1:1087
+https_proxy=http://127.0.0.1:1087
+all_proxy=socks5h://127.0.0.1:1087
+```
+
+已经打开的 terminal 需要手动执行一次：
+
+```bash
+source ~/.config/mihomo-box/proxy.env
+```
+
 ## 推荐菜单顺序
 
 ```text
 1. 检查环境
 2. 导入 SSR 订阅链接，并生成配置（Go）
 4. 启动 Mihomo 服务
-7. 打开 macOS 系统代理
+7. 打开 macOS 系统代理 / Ubuntu 命令行代理
 9. 选择代理站点 / 节点
 10. 刷新状态
 ```
@@ -109,9 +145,7 @@ proxy group: PROXY
 
 ## 菜单实现建议
 
-现在的菜单是 `bin/mihomo-tui` Bash 脚本。
-
-短期建议保持 Bash：它调用 `launchctl`、`networksetup`、`curl`、`open` 这些 macOS 命令很直接，改动小，适合当前包的体量。
+现在的菜单是 `bin/mihomo-tui` Bash 脚本。macOS 使用 `launchctl` 和 `networksetup`；Ubuntu 命令行使用 `systemd --user` 和 shell 代理环境文件。
 
 菜单里的 SSR 解析和 JSON 处理已经走 Go，Python 只保留在 `bin/backup/` 里作为旧版备份。
 
@@ -123,4 +157,4 @@ proxy group: PROXY
 ./uninstall.sh
 ```
 
-它会停止 launchd 服务、关闭当前网络服务的系统代理，但不会删除整个目录。直接删除 `mihomo-box-macos` 文件夹即可彻底清理。
+它会停止服务、关闭当前网络服务或命令行代理，但不会删除整个目录。直接删除 `mihomo-box` 文件夹即可彻底清理。
