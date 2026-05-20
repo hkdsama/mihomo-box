@@ -1,0 +1,89 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Read mihomo kernel version
+        id: mihomo_ver
+        run: |
+          VER=$(grep -oE 'v[0-9]+\.[0-9]+\.[0-9]+' VERSION | tail -1)
+          echo "ver=${VER}" >> "$GITHUB_OUTPUT"
+          echo "Mihomo kernel version: ${VER}"
+
+      # ── Cross-compile Go tools ────────────────────────────────
+      - name: Build Go binaries (darwin/arm64)
+        run: |
+          GOOS=darwin GOARCH=arm64 go build -o dist/darwin/ssr_2_mihomo   ./cmd/ssr_2_mihomo/main.go
+          GOOS=darwin GOARCH=arm64 go build -o dist/darwin/mihomo_ctl      ./cmd/mihomo_ctl/main.go
+
+      - name: Build Go binaries (linux/amd64)
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o dist/linux/ssr_2_mihomo    ./cmd/ssr_2_mihomo/main.go
+          GOOS=linux GOARCH=amd64 go build -o dist/linux/mihomo_ctl       ./cmd/mihomo_ctl/main.go
+
+      # ── Download mihomo kernels ───────────────────────────────
+      - name: Download mihomo kernels
+        env:
+          VER: ${{ steps.mihomo_ver.outputs.ver }}
+        run: |
+          BASE="https://github.com/MetaCubeX/mihomo/releases/download/${VER}"
+          curl -fL "${BASE}/mihomo-darwin-arm64-${VER}.gz"    | gunzip > dist/darwin/mihomo-darwin-arm64
+          curl -fL "${BASE}/mihomo-linux-amd64-v3-${VER}.gz"  | gunzip > dist/linux/mihomo-linux-amd64-v3
+          chmod +x dist/darwin/mihomo-darwin-arm64 dist/linux/mihomo-linux-amd64-v3
+
+      # ── Package macOS (Apple Silicon) ────────────────────────
+      - name: Package darwin-arm64
+        run: |
+          P=pkg/mihomo-box
+          mkdir -p $P/bin $P/config $P/data $P/logs $P/service
+
+          cp dist/darwin/ssr_2_mihomo dist/darwin/mihomo_ctl dist/darwin/mihomo-darwin-arm64 $P/bin/
+          cp bin/mihomo-tui bin/fetch-mihomo.sh $P/bin/
+          chmod +x $P/bin/*
+
+          cp config/config_base.yaml config/config.yaml.example $P/config/
+          cp install.sh uninstall.sh README.md VERSION $P/
+
+          cd pkg && tar -czf ../mihomo-box-darwin-arm64.tar.gz mihomo-box
+          cd .. && rm -rf pkg
+
+      # ── Package Ubuntu (amd64) ───────────────────────────────
+      - name: Package linux-amd64
+        run: |
+          P=pkg/mihomo-box
+          mkdir -p $P/bin $P/config $P/data $P/logs $P/service
+
+          cp dist/linux/ssr_2_mihomo dist/linux/mihomo_ctl dist/linux/mihomo-linux-amd64-v3 $P/bin/
+          cp bin/mihomo-tui bin/fetch-mihomo.sh $P/bin/
+          chmod +x $P/bin/*
+
+          cp config/config_base.yaml config/config.yaml.example $P/config/
+          cp install.sh uninstall.sh README.md VERSION $P/
+
+          cd pkg && tar -czf ../mihomo-box-linux-amd64.tar.gz mihomo-box
+          cd .. && rm -rf pkg
+
+      # ── Create GitHub Release ────────────────────────────────
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            mihomo-box-darwin-arm64.tar.gz
+            mihomo-box-linux-amd64.tar.gz
