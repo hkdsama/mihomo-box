@@ -420,14 +420,9 @@ proxy_ok() {
 }
 
 current_node() {
-  api_ok || { echo "API 未连接"; return 1; }
-  local tmp
-  tmp="$(mktemp)"
-  api_curl "$API/proxies/$GROUP" > "$tmp"
-  local node
-  node="$(run_mihomo_ctl now "$tmp" 2>/dev/null)" || true
-  rm -f "$tmp"
-  [[ -n "$node" ]] && echo "$node" || echo "未知"
+  # 从 API 响应里提取 "now" 字段（compact JSON，无空格）
+  api_curl --max-time 2 "$API/proxies/$GROUP" 2>/dev/null \
+    | grep -o '"now":"[^"]*"' | cut -d'"' -f4 || echo "-"
 }
 
 status_bar() {
@@ -442,22 +437,48 @@ status_bar() {
   echo -e "当前节点：${YELLOW}${node}${NC}"
 }
 
-# ── 节点选择 ──────────────────────────────────────────────────────
+# ── 节点选择（从 proxies.yaml 读取，无需 API GET）────────────────
 select_node() {
-  api_ok || { echo -e "${RED}无法连接 API: $API — 请先启动服务${NC}"; return 1; }
-  local tmp idx selected
-  tmp="$(mktemp)"
-  api_curl "$API/proxies/$GROUP" > "$tmp"
-  run_mihomo_ctl list "$tmp"
+  local proxies_file="$CONFIG_DIR/proxies.yaml"
+  if [[ ! -f "$proxies_file" ]]; then
+    echo -e "${RED}proxies.yaml 不存在，请先导入订阅${NC}"; return 1
+  fi
+
+  # 提取 proxies: 块里所有 name 值（去掉 JSON 引号）
+  local -a names
+  while IFS= read -r name; do
+    names+=("$name")
+  done < <(awk '
+    /^proxies:/     { in_proxies=1; next }
+    /^proxy-groups:/ { in_proxies=0 }
+    in_proxies && /^  - name:/ {
+      sub(/^  - name: /, ""); gsub(/^"|"$/, ""); print
+    }
+  ' "$proxies_file")
+
+  if [[ ${#names[@]} -eq 0 ]]; then
+    echo -e "${RED}proxies.yaml 中没有找到节点${NC}"; return 1
+  fi
+
+  local current; current="$(current_node 2>/dev/null || echo '-')"
+  echo "当前节点: $current"
+  echo "------------------------------------------------------------"
+  for i in "${!names[@]}"; do
+    printf "  %3d. %s\n" $((i+1)) "${names[$i]}"
+  done
+  echo "------------------------------------------------------------"
+  echo "    0. 返回"
+
   read -r -p "请选择节点编号: " idx
-  [[ "$idx" == "0" || -z "$idx" ]] && rm -f "$tmp" && return
-  selected="$(run_mihomo_ctl pick "$tmp" "$idx")" || { echo -e "${RED}编号无效${NC}"; rm -f "$tmp"; return 1; }
-  rm -f "$tmp"
-  run_mihomo_ctl payload "$selected" > /tmp/mihomo_select_payload.json
+  [[ "$idx" == "0" || -z "$idx" ]] && return
+  if ! [[ "$idx" =~ ^[0-9]+$ ]] || (( idx < 1 || idx > ${#names[@]} )); then
+    echo -e "${RED}编号无效${NC}"; return 1
+  fi
+
+  local selected="${names[$((idx-1))]}"
   api_curl -X PUT "$API/proxies/$GROUP" \
     -H "Content-Type: application/json" \
-    --data-binary @/tmp/mihomo_select_payload.json >/dev/null
-  rm -f /tmp/mihomo_select_payload.json
+    -d "{\"name\":\"$selected\"}" >/dev/null
   echo -e "${GREEN}已切换到: $selected${NC}"
 }
 
