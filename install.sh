@@ -2,7 +2,7 @@
 set -euo pipefail
 BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-mkdir -p "$BASE_DIR"/{config,data,logs,service}
+mkdir -p "$BASE_DIR"/{config,data,logs}
 
 chmod +x "$BASE_DIR/bin/mihomo-tui" \
          "$BASE_DIR/bin/fetch-mihomo.sh" \

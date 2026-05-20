@@ -51,7 +51,7 @@ jobs:
       - name: Package darwin-arm64
         run: |
           P=pkg/mihomo-box
-          mkdir -p $P/bin $P/config $P/data $P/logs $P/service
+          mkdir -p $P/bin $P/config $P/data $P/logs
 
           cp dist/darwin/ssr_2_mihomo dist/darwin/mihomo_ctl dist/darwin/mihomo-darwin-arm64 $P/bin/
           cp bin/mihomo-tui bin/fetch-mihomo.sh $P/bin/
@@ -67,7 +67,7 @@ jobs:
       - name: Package linux-amd64
         run: |
           P=pkg/mihomo-box
-          mkdir -p $P/bin $P/config $P/data $P/logs $P/service
+          mkdir -p $P/bin $P/config $P/data $P/logs
 
           cp dist/linux/ssr_2_mihomo dist/linux/mihomo_ctl dist/linux/mihomo-linux-amd64-v3 $P/bin/
           cp bin/mihomo-tui bin/fetch-mihomo.sh $P/bin/
