@@ -20,12 +20,14 @@ esac
 SSR_CONVERTER_BIN="$BASE_DIR/bin/ssr_2_mihomo"
 MIHOMO_CTL_BIN="$BASE_DIR/bin/mihomo_ctl"
 
-# macOS: LaunchAgent（用户级，登录后自启，KeepAlive 自动重启）
-PLIST="$HOME/Library/LaunchAgents/com.local.mihomo.box.plist"
+# macOS 服务路径
 PLIST_LABEL="com.local.mihomo.box"
+PLIST_AGENT="$HOME/Library/LaunchAgents/${PLIST_LABEL}.plist"
+PLIST_DAEMON="/Library/LaunchDaemons/${PLIST_LABEL}.plist"
 
-# Linux: systemd --user
-SYSTEMD_SERVICE="$HOME/.config/systemd/user/mihomo-box.service"
+# Linux 服务路径
+SYSTEMD_USER_SERVICE="$HOME/.config/systemd/user/mihomo-box.service"
+SYSTEMD_SYS_SERVICE="/etc/systemd/system/mihomo-box.service"
 
 PROXY_ENV_DIR="$HOME/.config/mihomo-box"
 PROXY_ENV_FILE="$PROXY_ENV_DIR/proxy.env"
@@ -129,13 +131,16 @@ update_subscription() {
 }
 
 # ── 服务文件写入 ──────────────────────────────────────────────────
-write_launchd_plist() {
+_check_bin() {
   if [[ ! -x "$MIHOMO_BIN" ]]; then
-    echo -e "${RED}未找到 mihomo 内核: $MIHOMO_BIN${NC}"
-    return 1
+    echo -e "${RED}未找到 mihomo 内核: $MIHOMO_BIN${NC}"; return 1
   fi
-  mkdir -p "$HOME/Library/LaunchAgents" "$LOG_DIR"
-  cat > "$PLIST" <<PLIST
+}
+
+_plist_body() {
+  local dest="$1" user_key="$2"
+  mkdir -p "$(dirname "$dest")" "$LOG_DIR"
+  cat > "$dest" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN"
  "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -148,6 +153,7 @@ write_launchd_plist() {
       <string>-d</string>
       <string>$CONFIG_DIR</string>
     </array>
+    $user_key
     <key>RunAtLoad</key><true/>
     <key>KeepAlive</key><true/>
     <key>StandardOutPath</key><string>$LOG_DIR/stdout.log</string>
@@ -155,18 +161,30 @@ write_launchd_plist() {
   </dict>
 </plist>
 PLIST
-  echo -e "${GREEN}LaunchAgent 已写入: $PLIST${NC}"
 }
 
-write_systemd_service() {
-  if [[ ! -x "$MIHOMO_BIN" ]]; then
-    echo -e "${RED}未找到 mihomo 内核: $MIHOMO_BIN${NC}"
-    return 1
-  fi
-  mkdir -p "$(dirname "$SYSTEMD_SERVICE")"
-  cat > "$SYSTEMD_SERVICE" <<SERVICE
+write_launch_agent() {
+  _check_bin || return 1
+  _plist_body "$PLIST_AGENT" ""
+  echo -e "${GREEN}LaunchAgent 已写入: $PLIST_AGENT${NC}"
+  echo "  登录后自启，以当前用户身份运行，无需 sudo"
+}
+
+write_launch_daemon() {
+  _check_bin || return 1
+  echo -e "${YELLOW}LaunchDaemon 需要 sudo 写入 /Library/LaunchDaemons/${NC}"
+  local user_key="<key>UserName</key><string>$(whoami)</string>"
+  sudo bash -c "$(declare -f _plist_body); _plist_body '$PLIST_DAEMON' '$user_key'"
+  echo -e "${GREEN}LaunchDaemon 已写入: $PLIST_DAEMON${NC}"
+  echo "  开机即启（登录前），以当前用户身份运行"
+}
+
+write_systemd_user() {
+  _check_bin || return 1
+  mkdir -p "$(dirname "$SYSTEMD_USER_SERVICE")"
+  cat > "$SYSTEMD_USER_SERVICE" <<SERVICE
 [Unit]
-Description=mihomo-box
+Description=mihomo-box (user)
 After=network-online.target
 
 [Service]
@@ -179,37 +197,109 @@ RestartSec=2
 WantedBy=default.target
 SERVICE
   systemctl --user daemon-reload
-  echo -e "${GREEN}systemd 服务已写入: $SYSTEMD_SERVICE${NC}"
+  systemctl --user enable mihomo-box.service
+  echo -e "${GREEN}systemd user 服务已写入: $SYSTEMD_USER_SERVICE${NC}"
+  echo "  登录后自启，以当前用户身份运行，无需 sudo"
+  if loginctl show-user "$(whoami)" 2>/dev/null | grep -q "Linger=no"; then
+    read -r -p "  是否启用 linger（开机自启，无需登录）? [y/N] " yn
+    [[ "$yn" =~ ^[Yy]$ ]] && loginctl enable-linger "$(whoami)" \
+      && echo -e "${GREEN}已启用 linger${NC}"
+  fi
 }
 
-# ── 安装服务（写入启动项，不启动）────────────────────────────────
+write_systemd_system() {
+  _check_bin || return 1
+  echo -e "${YELLOW}system 服务需要 sudo 写入 /etc/systemd/system/${NC}"
+  sudo tee "$SYSTEMD_SYS_SERVICE" > /dev/null <<SERVICE
+[Unit]
+Description=mihomo-box (system)
+After=network-online.target
+
+[Service]
+Type=simple
+User=$(whoami)
+ExecStart=$MIHOMO_BIN -d $CONFIG_DIR
+Restart=always
+RestartSec=2
+
+[Install]
+WantedBy=multi-user.target
+SERVICE
+  sudo systemctl daemon-reload
+  sudo systemctl enable mihomo-box.service
+  echo -e "${GREEN}systemd system 服务已写入: $SYSTEMD_SYS_SERVICE${NC}"
+  echo "  开机即启（登录前），以当前用户身份运行"
+}
+
+# ── 安装服务（子菜单）────────────────────────────────────────────
 setup_service() {
   if [[ ! -f "$CONFIG_FILE" ]]; then
-    echo -e "${RED}config.yaml 不存在，请先导入订阅${NC}"
-    return 1
+    echo -e "${RED}config.yaml 不存在，请先导入订阅${NC}"; return 1
   fi
+  echo
   if [[ "$OS_NAME" == "Darwin" ]]; then
-    write_launchd_plist
+    echo "选择安装方式："
+    echo "  1. LaunchAgent  — 登录后自启，无需 sudo（推荐个人使用）"
+    echo "  2. LaunchDaemon — 开机即启，需要 sudo（适合共享/服务器场景）"
+    echo "  0. 返回"
+    read -r -p "请选择 [0-2]: " sc
+    case "$sc" in
+      1) write_launch_agent ;;
+      2) write_launch_daemon ;;
+      0) return ;;
+      *) echo "无效选择" ;;
+    esac
   elif [[ "$OS_NAME" == "Linux" ]]; then
-    write_systemd_service
-    systemctl --user enable mihomo-box.service
-    echo -e "${GREEN}已设为开机自启${NC}"
+    echo "选择安装方式："
+    echo "  1. systemd user   — 登录后自启，无需 sudo（推荐个人使用）"
+    echo "  2. systemd system — 开机即启，需要 sudo（适合服务器场景）"
+    echo "  0. 返回"
+    read -r -p "请选择 [0-2]: " sc
+    case "$sc" in
+      1) write_systemd_user ;;
+      2) write_systemd_system ;;
+      0) return ;;
+      *) echo "无效选择" ;;
+    esac
   else
-    echo -e "${RED}暂不支持: $OS_NAME${NC}"
-    return 1
+    echo -e "${RED}暂不支持: $OS_NAME${NC}"; return 1
   fi
 }
 
 # ── 服务启停 ──────────────────────────────────────────────────────
+_active_plist() {
+  # 返回当前已 bootstrap 的 plist 路径（agent 优先）
+  if launchctl print "gui/$(id -u)/$PLIST_LABEL" >/dev/null 2>&1; then
+    echo "$PLIST_AGENT"
+  elif sudo launchctl print "system/$PLIST_LABEL" >/dev/null 2>&1; then
+    echo "$PLIST_DAEMON"
+  else
+    # 未运行，用已存在的文件推断
+    [[ -f "$PLIST_AGENT" ]] && echo "$PLIST_AGENT" || echo "$PLIST_DAEMON"
+  fi
+}
+
 start_service() {
   if [[ "$OS_NAME" == "Darwin" ]]; then
-    [[ ! -f "$PLIST" ]] && write_launchd_plist
-    launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
-    launchctl bootstrap "gui/$(id -u)" "$PLIST"
-    launchctl kickstart -k "gui/$(id -u)/$PLIST_LABEL"
+    local plist; plist="$(_active_plist)"
+    if [[ "$plist" == "$PLIST_DAEMON" ]]; then
+      [[ ! -f "$PLIST_DAEMON" ]] && write_launch_daemon
+      sudo launchctl bootout  system "$PLIST_DAEMON" >/dev/null 2>&1 || true
+      sudo launchctl bootstrap system "$PLIST_DAEMON"
+      sudo launchctl kickstart -k "system/$PLIST_LABEL"
+    else
+      [[ ! -f "$PLIST_AGENT" ]] && write_launch_agent
+      launchctl bootout  "gui/$(id -u)" "$PLIST_AGENT" >/dev/null 2>&1 || true
+      launchctl bootstrap "gui/$(id -u)" "$PLIST_AGENT"
+      launchctl kickstart -k "gui/$(id -u)/$PLIST_LABEL"
+    fi
   elif [[ "$OS_NAME" == "Linux" ]]; then
-    [[ ! -f "$SYSTEMD_SERVICE" ]] && write_systemd_service
-    systemctl --user start mihomo-box.service
+    if [[ -f "$SYSTEMD_SYS_SERVICE" ]]; then
+      sudo systemctl start mihomo-box.service
+    else
+      [[ ! -f "$SYSTEMD_USER_SERVICE" ]] && write_systemd_user
+      systemctl --user start mihomo-box.service
+    fi
   else
     echo -e "${RED}暂不支持: $OS_NAME${NC}"; return 1
   fi
@@ -218,9 +308,11 @@ start_service() {
 
 stop_service() {
   if [[ "$OS_NAME" == "Darwin" ]]; then
-    launchctl bootout "gui/$(id -u)" "$PLIST" >/dev/null 2>&1 || true
+    launchctl bootout "gui/$(id -u)" "$PLIST_AGENT" >/dev/null 2>&1 || true
+    sudo launchctl bootout system "$PLIST_DAEMON" >/dev/null 2>&1 || true
   elif [[ "$OS_NAME" == "Linux" ]]; then
     systemctl --user stop mihomo-box.service >/dev/null 2>&1 || true
+    sudo systemctl stop mihomo-box.service >/dev/null 2>&1 || true
   fi
   echo -e "${GREEN}Mihomo 已停止${NC}"
 }
@@ -291,9 +383,11 @@ api_ok()     { curl -s --max-time 2 "$API/proxies/$GROUP" >/dev/null 2>&1; }
 
 service_ok() {
   if [[ "$OS_NAME" == "Darwin" ]]; then
-    launchctl print "gui/$(id -u)/$PLIST_LABEL" >/dev/null 2>&1
+    launchctl print "gui/$(id -u)/$PLIST_LABEL" >/dev/null 2>&1 ||
+    sudo launchctl print "system/$PLIST_LABEL" >/dev/null 2>&1
   elif [[ "$OS_NAME" == "Linux" ]]; then
-    systemctl --user is-active --quiet mihomo-box.service 2>/dev/null
+    systemctl --user is-active --quiet mihomo-box.service 2>/dev/null ||
+    systemctl is-active --quiet mihomo-box.service 2>/dev/null
   else
     return 1
   fi
