@@ -1,6 +1,6 @@
 # mihomo-box
 
-macOS（Apple Silicon）和 Ubuntu（amd64）的 Mihomo 命令行管理包。
+macOS（Apple Silicon）和 Ubuntu（amd64）的 Mihomo 命令行管理包，release 版本自带所有二进制，开箱即用。
 
 ## 部署步骤
 
@@ -11,78 +11,62 @@ tar -xzf mihomo-box.tar.gz
 cd mihomo-box
 ```
 
-### 2. 下载 mihomo 内核
-
-```bash
-# macOS Apple Silicon
-./bin/fetch-mihomo.sh
-
-# Ubuntu amd64
-./bin/fetch-mihomo.sh linux
-```
-
-### 3. 初始化
+### 2. 初始化
 
 ```bash
 ./install.sh
 ```
 
-如果本机安装了 Go，会自动构建 `bin/ssr_2_mihomo` 和 `bin/mihomo_ctl`。
+设置文件权限，macOS 同时清除系统隔离标记。
 
-### 4. 创建基础配置
-
-首次使用需要创建 `config/config_base.yaml`（如果不存在）：
-
-```bash
-cp config/config_base.yaml.example config/config_base.yaml  # 若有示例
-# 或直接编辑已有的 config/config_base.yaml，按需修改端口、DNS 等
-```
-
-`config_base.yaml` 是手动维护的配置，包含端口、DNS、路由规则等，**不会被订阅更新覆盖**。
-
-### 5. 导入 SSR 订阅，生成配置
-
-```bash
-./bin/ssr_2_mihomo --url "你的SSR订阅链接"
-```
-
-执行后自动完成两件事：
-1. 解析订阅，将节点写入 `config/proxies.yaml`
-2. 合并 `config_base.yaml` + `proxies.yaml` → `config/config.yaml`
-
-如果只想重新合并（不拉订阅）：
-
-```bash
-./bin/ssr_2_mihomo merge
-```
-
-### 6. 启动菜单
+### 3. 打开菜单
 
 ```bash
 ./bin/mihomo-tui
 ```
 
-推荐操作顺序：
+首次使用按以下顺序操作：
 
 ```
-1. 检查环境
-2. 导入 SSR 订阅（生成配置）
-3. 启动 Mihomo 服务
-4. 打开系统代理（macOS）/ 命令行代理（Ubuntu）
-5. 选择节点
+1  → 检查环境
+2  → 导入 SSR 订阅（输入链接，自动生成配置）
+4  → 安装服务（选 Agent/user 或 Daemon/system）
+5  → 启动服务
+8  → 打开系统代理（macOS）/ 命令行代理（Ubuntu）
+10 → 选择节点
 ```
 
 ---
 
-## 配置文件说明
+## 菜单说明
 
-| 文件 | 说明 |
+| 编号 | 功能 |
 |------|------|
-| `config/config_base.yaml` | 手动维护，含端口/DNS/规则，纳入版本控制 |
-| `config/proxies.yaml` | 自动生成，含节点列表，**勿手动修改** |
-| `config/config.yaml` | 合并结果，mihomo 实际读取，不纳入版本控制 |
+| 1 | 检查环境和工具状态 |
+| 2 | 导入 SSR 订阅链接（首次或换订阅） |
+| 3 | 更新订阅并重新生成配置 |
+| 4 | 安装服务（写入启动项，见下方说明） |
+| 5 | 启动服务 |
+| 6 | 停止服务 |
+| 7 | 重启服务 |
+| 8 | 打开系统代理 / 命令行代理 |
+| 9 | 关闭系统代理 / 命令行代理 |
+| 10 | 选择代理节点 |
+| 11 | 查看日志 |
+| 12 | 编辑基础配置（端口、DNS、规则） |
 
-修改端口或规则时只需编辑 `config_base.yaml`，然后执行 `./bin/ssr_2_mihomo merge` 重新合并。
+### 安装服务两种模式
+
+| | macOS | Linux |
+|---|---|---|
+| **选项 1** | LaunchAgent | systemd user |
+| 权限 | 无需 sudo | 无需 sudo |
+| 启动时机 | 登录后 | 登录后（可选开启 linger 实现开机自启） |
+| **选项 2** | LaunchDaemon | systemd system |
+| 权限 | 需要 sudo | 需要 sudo |
+| 启动时机 | 开机即启（登录前） | 开机即启（登录前） |
+
+个人使用推荐选项 1，服务器或需要开机自启选项 2。
 
 ---
 
@@ -91,24 +75,6 @@ cp config/config_base.yaml.example config/config_base.yaml  # 若有示例
 ```
 mixed-port:          127.0.0.1:1087
 external-controller: 127.0.0.1:9090
-```
-
----
-
-## Ubuntu 命令行代理
-
-启用后会在新 terminal 中自动生效：
-
-```
-http_proxy=http://127.0.0.1:1087
-https_proxy=http://127.0.0.1:1087
-all_proxy=socks5h://127.0.0.1:1087
-```
-
-已打开的 terminal 需手动执行一次：
-
-```bash
-source ~/.config/mihomo-box/proxy.env
 ```
 
 ---
