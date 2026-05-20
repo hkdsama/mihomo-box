@@ -158,3 +158,9 @@ proxy group: PROXY
 ```
 
 它会停止服务、关闭当前网络服务或命令行代理，但不会删除整个目录。直接删除 `mihomo-box` 文件夹即可彻底清理。
+
+## GO下载代理
+go env -w GO111MODULE=on# 推荐：使用 Google 官方全球代理 + 备用 Cloudflare 代理
+go env -w GOPROXY=https://proxy.golang.org,https://goproxy.io,direct
+
+
