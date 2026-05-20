@@ -4,10 +4,6 @@ BASE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 mkdir -p "$BASE_DIR"/{config,data,logs,service}
 
-if [[ ! -f "$BASE_DIR/config/config.yaml" && -f "$BASE_DIR/config/config.yaml.example" ]]; then
-  cp "$BASE_DIR/config/config.yaml.example" "$BASE_DIR/config/config.yaml"
-fi
-
 chmod +x "$BASE_DIR/bin/mihomo-tui" \
          "$BASE_DIR/bin/fetch-mihomo.sh" \
          "$BASE_DIR/bin/ssr_2_mihomo" \
