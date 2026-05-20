@@ -38,6 +38,24 @@ PORT="1087"
 
 GREEN='\033[0;32m'; RED='\033[0;31m'; YELLOW='\033[1;33m'; BLUE='\033[0;34m'; NC='\033[0m'
 
+# 从 config.yaml 读取 secret，供所有 API 调用使用
+_read_secret() {
+  [[ -f "$CONFIG_FILE" ]] || { echo ""; return; }
+  local s
+  s="$(grep -E '^secret:' "$CONFIG_FILE" | head -1 | sed 's/^secret:[[:space:]]*//' | tr -d '"'"'")"
+  echo "$s"
+}
+SECRET="$(_read_secret)"
+
+# 带鉴权的 curl：secret 非空时自动加 Authorization header
+api_curl() {
+  if [[ -n "$SECRET" ]]; then
+    curl -s -H "Authorization: Bearer $SECRET" "$@"
+  else
+    curl -s "$@"
+  fi
+}
+
 mkdir -p "$CONFIG_DIR" "$DATA_DIR" "$LOG_DIR"
 
 line()      { printf '%*s\n' "${COLUMNS:-72}" '' | tr ' ' '='; }
@@ -379,7 +397,7 @@ proxy_off() {
 }
 
 # ── 状态检测 ──────────────────────────────────────────────────────
-api_ok()     { curl -s --max-time 2 "$API/proxies/$GROUP" >/dev/null 2>&1; }
+api_ok()     { api_curl --max-time 2 "$API/proxies/$GROUP" >/dev/null 2>&1; }
 
 service_ok() {
   if [[ "$OS_NAME" == "Darwin" ]]; then
@@ -405,7 +423,7 @@ current_node() {
   api_ok || { echo "API 未连接"; return 1; }
   local tmp
   tmp="$(mktemp)"
-  curl -s "$API/proxies/$GROUP" > "$tmp"
+  api_curl "$API/proxies/$GROUP" > "$tmp"
   local node
   node="$(run_mihomo_ctl now "$tmp" 2>/dev/null)" || true
   rm -f "$tmp"
@@ -429,14 +447,14 @@ select_node() {
   api_ok || { echo -e "${RED}无法连接 API: $API — 请先启动服务${NC}"; return 1; }
   local tmp idx selected
   tmp="$(mktemp)"
-  curl -s "$API/proxies/$GROUP" > "$tmp"
+  api_curl "$API/proxies/$GROUP" > "$tmp"
   run_mihomo_ctl list "$tmp"
   read -r -p "请选择节点编号: " idx
   [[ "$idx" == "0" || -z "$idx" ]] && rm -f "$tmp" && return
   selected="$(run_mihomo_ctl pick "$tmp" "$idx")" || { echo -e "${RED}编号无效${NC}"; rm -f "$tmp"; return 1; }
   rm -f "$tmp"
   run_mihomo_ctl payload "$selected" > /tmp/mihomo_select_payload.json
-  curl -s -X PUT "$API/proxies/$GROUP" \
+  api_curl -X PUT "$API/proxies/$GROUP" \
     -H "Content-Type: application/json" \
     --data-binary @/tmp/mihomo_select_payload.json >/dev/null
   rm -f /tmp/mihomo_select_payload.json
