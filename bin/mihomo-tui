@@ -133,19 +133,19 @@ run_mihomo_ctl() {
 
 # ── 订阅管理 ─────────────────────────────────────────────────────
 import_subscription() {
-  read -r -p "请输入 SSR 订阅链接: " url
-  [[ -z "$url" ]] && echo "已取消" && return
+  local saved=""
+  [[ -f "$SUB_FILE" ]] && saved="$(cat "$SUB_FILE")"
+  if [[ -n "$saved" ]]; then
+    echo "已保存的链接: $saved"
+    read -r -p "直接回车复用，或输入新链接: " url
+    [[ -z "$url" ]] && url="$saved"
+  else
+    read -r -p "请输入 SSR 订阅链接: " url
+    [[ -z "$url" ]] && echo "已取消" && return
+  fi
   mkdir -p "$DATA_DIR"
   echo "$url" > "$SUB_FILE"
   run_ssr_converter "$url"
-}
-
-update_subscription() {
-  if [[ ! -f "$SUB_FILE" ]]; then
-    echo -e "${RED}还没有订阅链接，请先导入${NC}"
-    return 1
-  fi
-  run_ssr_converter "$(cat "$SUB_FILE")"
 }
 
 # ── 服务文件写入 ──────────────────────────────────────────────────
@@ -499,7 +499,7 @@ edit_base_config() {
   fi
   ${EDITOR:-nano} "$CONFIG_BASE"
   echo
-  echo "修改已保存。如需生效请执行更新订阅（选项 3）重新合并 config.yaml，然后重启服务（选项 7）。"
+  echo "修改已保存。如需生效请重新导入订阅（选项 2）重新合并 config.yaml，然后重启服务（选项 6）。"
   pause
 }
 
@@ -514,41 +514,39 @@ while true; do
   echo "  目录: $BASE_DIR   平台: $OS_NAME/$ARCH_NAME"
   line
   echo "  1.  检查环境"
-  echo "  2.  导入 SSR 订阅（首次 / 换订阅）"
-  echo "  3.  更新订阅并重新生成配置"
+  echo "  2.  导入 / 更新 SSR 订阅"
   small_line
-  echo "  4.  安装服务（写入启动项）"
-  echo "  5.  启动服务"
-  echo "  6.  停止服务"
-  echo "  7.  重启服务"
+  echo "  3.  安装服务（写入启动项）"
+  echo "  4.  启动服务"
+  echo "  5.  停止服务"
+  echo "  6.  重启服务"
   small_line
   if [[ "$OS_NAME" == "Linux" ]]; then
-    echo "  8.  打开命令行代理"
-    echo "  9.  关闭命令行代理"
+    echo "  7.  打开命令行代理"
+    echo "  8.  关闭命令行代理"
   else
-    echo "  8.  打开 macOS 系统代理"
-    echo "  9.  关闭 macOS 系统代理"
+    echo "  7.  打开 macOS 系统代理"
+    echo "  8.  关闭 macOS 系统代理"
   fi
   small_line
-  echo "  10. 选择节点"
-  echo "  11. 查看日志"
-  echo "  12. 编辑基础配置 (config_base.yaml)"
+  echo "  9.  选择节点"
+  echo "  10. 查看日志"
+  echo "  11. 编辑基础配置 (config_base.yaml)"
   echo "  0.  退出"
   line
-  read -r -p "  请输入选择 [0-12]: " c
+  read -r -p "  请输入选择 [0-11]: " c
   case "$c" in
-    1)  check_env;         pause ;;
+    1)  check_env;           pause ;;
     2)  import_subscription; pause ;;
-    3)  update_subscription; pause ;;
-    4)  setup_service;     pause ;;
-    5)  start_service;     pause ;;
-    6)  stop_service;      pause ;;
-    7)  restart_service;   pause ;;
-    8)  proxy_on;          pause ;;
-    9)  proxy_off;         pause ;;
-    10) select_node;       pause ;;
-    11) logs;              pause ;;
-    12) edit_base_config ;;
+    3)  setup_service;       pause ;;
+    4)  start_service;       pause ;;
+    5)  stop_service;        pause ;;
+    6)  restart_service;     pause ;;
+    7)  proxy_on;            pause ;;
+    8)  proxy_off;           pause ;;
+    9)  select_node;         pause ;;
+    10) logs;                pause ;;
+    11) edit_base_config ;;
     0)  exit 0 ;;
     *)  echo "无效选择"; pause ;;
   esac
