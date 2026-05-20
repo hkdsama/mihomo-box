@@ -57,7 +57,7 @@ jobs:
           cp bin/mihomo-tui bin/fetch-mihomo.sh $P/bin/
           chmod +x $P/bin/*
 
-          cp config/config_base.yaml config/config.yaml.example $P/config/
+          cp config/config_base.yaml $P/config/
           cp install.sh uninstall.sh README.md VERSION $P/
 
           cd pkg && tar -czf ../mihomo-box-darwin-arm64.tar.gz mihomo-box
@@ -73,7 +73,7 @@ jobs:
           cp bin/mihomo-tui bin/fetch-mihomo.sh $P/bin/
           chmod +x $P/bin/*
 
-          cp config/config_base.yaml config/config.yaml.example $P/config/
+          cp config/config_base.yaml $P/config/
           cp install.sh uninstall.sh README.md VERSION $P/
 
           cd pkg && tar -czf ../mihomo-box-linux-amd64.tar.gz mihomo-box
