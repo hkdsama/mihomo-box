@@ -33,19 +33,25 @@ type SSRNode struct {
 }
 
 func main() {
+	// merge subcommand: merge config_base.yaml + proxies.yaml → config.yaml
+	if len(os.Args) >= 2 && os.Args[1] == "merge" {
+		mergeCLI(os.Args[2:])
+		return
+	}
+
 	var subURL string
 	var inputFile string
-	var outputFile string
-	var mixedPort int
-	var apiAddr string
+	var proxiesOut string
+	var baseFile string
+	var mergedOut string
 	var groupName string
 	var listOnly bool
 
 	flag.StringVar(&subURL, "url", "", "SSR subscription URL")
 	flag.StringVar(&inputFile, "input", "", "local subscription text file, optional")
-	flag.StringVar(&outputFile, "output", "./config/config.yaml", "output mihomo config.yaml")
-	flag.IntVar(&mixedPort, "mixed-port", 1087, "mihomo mixed-port")
-	flag.StringVar(&apiAddr, "api", "127.0.0.1:9090", "mihomo external-controller address")
+	flag.StringVar(&proxiesOut, "proxies-out", "./config/proxies.yaml", "output file for proxies+proxy-groups section")
+	flag.StringVar(&baseFile, "base", "./config/config_base.yaml", "base config file (merged with proxies to produce final config)")
+	flag.StringVar(&mergedOut, "output", "./config/config.yaml", "final merged config output")
 	flag.StringVar(&groupName, "group", "PROXY", "mihomo select proxy group name")
 	flag.BoolVar(&listOnly, "list", false, "only list parsed node names, do not write config")
 	flag.Parse()
@@ -76,19 +82,70 @@ func main() {
 		return
 	}
 
-	config := renderMihomoConfig(nodes, mixedPort, apiAddr, groupName)
-	if err := os.MkdirAll(filepath.Dir(outputFile), 0755); err != nil {
+	proxiesContent := renderProxiesSection(nodes, groupName)
+	if err := os.MkdirAll(filepath.Dir(proxiesOut), 0755); err != nil {
 		fatal("创建输出目录失败: %v", err)
 	}
-	if err := os.WriteFile(outputFile, []byte(config), 0644); err != nil {
-		fatal("写入配置失败: %v", err)
+	if err := os.WriteFile(proxiesOut, []byte(proxiesContent), 0644); err != nil {
+		fatal("写入 proxies 配置失败: %v", err)
+	}
+	fmt.Printf("已生成 proxies 配置: %s\n", proxiesOut)
+	fmt.Printf("节点数量: %d\n", len(nodes))
+
+	// auto-merge if base file exists
+	baseContent, err := os.ReadFile(baseFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			fmt.Printf("提示: 未找到 %s，跳过合并。\n", baseFile)
+			fmt.Printf("      请创建该文件后执行: ./bin/ssr_2_mihomo merge\n")
+			return
+		}
+		fatal("读取基础配置失败: %v", err)
 	}
 
-	fmt.Printf("已生成配置: %s\n", outputFile)
-	fmt.Printf("节点数量: %d\n", len(nodes))
-	fmt.Printf("mixed-port: %d\n", mixedPort)
-	fmt.Printf("external-controller: %s\n", apiAddr)
-	fmt.Printf("proxy group: %s\n", groupName)
+	merged := mergeConfigs(string(baseContent), proxiesContent)
+	if err := os.MkdirAll(filepath.Dir(mergedOut), 0755); err != nil {
+		fatal("创建输出目录失败: %v", err)
+	}
+	if err := os.WriteFile(mergedOut, []byte(merged), 0644); err != nil {
+		fatal("写入最终配置失败: %v", err)
+	}
+	fmt.Printf("已合并配置: %s\n", mergedOut)
+}
+
+func mergeCLI(args []string) {
+	fs := flag.NewFlagSet("merge", flag.ExitOnError)
+	baseFile := fs.String("base", "./config/config_base.yaml", "base config file")
+	proxiesFile := fs.String("proxies", "./config/proxies.yaml", "proxies section file")
+	output := fs.String("output", "./config/config.yaml", "merged output file")
+	fs.Parse(args)
+
+	baseContent, err := os.ReadFile(*baseFile)
+	if err != nil {
+		fatal("读取基础配置失败: %v", err)
+	}
+	proxiesContent, err := os.ReadFile(*proxiesFile)
+	if err != nil {
+		fatal("读取 proxies 配置失败: %v", err)
+	}
+
+	merged := mergeConfigs(string(baseContent), string(proxiesContent))
+	if err := os.MkdirAll(filepath.Dir(*output), 0755); err != nil {
+		fatal("创建输出目录失败: %v", err)
+	}
+	if err := os.WriteFile(*output, []byte(merged), 0644); err != nil {
+		fatal("写入最终配置失败: %v", err)
+	}
+	fmt.Printf("已合并配置: %s\n", *output)
+}
+
+// mergeConfigs concatenates base config and proxies section.
+// The two halves cover disjoint top-level YAML keys so plain
+// concatenation produces a valid single-document YAML file.
+func mergeConfigs(base, proxies string) string {
+	base = strings.TrimRight(base, "\n")
+	proxies = strings.TrimLeft(proxies, "\n")
+	return base + "\n\n" + proxies
 }
 
 func fatal(format string, args ...any) {
@@ -356,39 +413,15 @@ func yq(s string) string {
 	return string(b)
 }
 
-func renderMihomoConfig(nodes []SSRNode, mixedPort int, apiAddr, groupName string) string {
+// renderProxiesSection generates only the proxies + proxy-groups sections.
+// These are auto-generated from the SSR subscription; everything else
+// (ports, DNS, rules) lives in config_base.yaml and is not touched here.
+func renderProxiesSection(nodes []SSRNode, groupName string) string {
 	var b strings.Builder
 
-	// 为了输出稳定，按名字排序；如果想保持订阅顺序，可以删除这几行。
 	sort.SliceStable(nodes, func(i, j int) bool {
 		return nodes[i].Name < nodes[j].Name
 	})
-
-	fmt.Fprintf(&b, "mixed-port: %d\n", mixedPort)
-	b.WriteString("allow-lan: false\n")
-	b.WriteString("bind-address: 127.0.0.1\n")
-	b.WriteString("mode: rule\n")
-	b.WriteString("log-level: info\n")
-	b.WriteString("ipv6: false\n")
-	fmt.Fprintf(&b, "external-controller: %s\n", apiAddr)
-	b.WriteString("secret: \"\"\n")
-	b.WriteString("\n")
-
-	b.WriteString("profile:\n")
-	b.WriteString("  store-selected: true\n")
-	b.WriteString("  store-fake-ip: true\n")
-	b.WriteString("\n")
-
-	b.WriteString("dns:\n")
-	b.WriteString("  enable: true\n")
-	b.WriteString("  listen: 127.0.0.1:1053\n")
-	b.WriteString("  ipv6: false\n")
-	b.WriteString("  enhanced-mode: fake-ip\n")
-	b.WriteString("  fake-ip-range: 198.18.0.1/16\n")
-	b.WriteString("  nameserver:\n")
-	b.WriteString("    - 1.1.1.1\n")
-	b.WriteString("    - 8.8.8.8\n")
-	b.WriteString("\n")
 
 	b.WriteString("proxies:\n")
 	for _, n := range nodes {
@@ -430,15 +463,6 @@ func renderMihomoConfig(nodes []SSRNode, mixedPort int, apiAddr, groupName strin
 		fmt.Fprintf(&b, "      - %s\n", yq(n.Name))
 	}
 	b.WriteString("      - DIRECT\n")
-	b.WriteString("\n")
-
-	b.WriteString("rules:\n")
-	b.WriteString("  - DOMAIN-SUFFIX,local,DIRECT\n")
-	b.WriteString("  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve\n")
-	b.WriteString("  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve\n")
-	b.WriteString("  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve\n")
-	b.WriteString("  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve\n")
-	fmt.Fprintf(&b, "  - MATCH,%s\n", groupName)
 
 	return b.String()
 }

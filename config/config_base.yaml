@@ -1,0 +1,67 @@
+# ============================================================
+# mihomo 基础配置 — 不含 proxies / proxy-groups
+# 这部分手动维护，不会被订阅更新覆盖。
+# proxies + proxy-groups 由 ssr_2_mihomo 写入 proxies.yaml，
+# 两者合并后生成最终的 config.yaml。
+# ============================================================
+
+mixed-port: 1087
+allow-lan: false
+bind-address: 127.0.0.1
+mode: rule
+log-level: info
+ipv6: false
+
+external-controller: 127.0.0.1:9090
+secret: ""
+
+profile:
+  store-selected: true
+  store-fake-ip: true
+
+# ------------------------------------------------------------
+# DNS（fake-ip 模式）
+# ------------------------------------------------------------
+dns:
+  enable: true
+  listen: 127.0.0.1:1053
+  ipv6: false
+  enhanced-mode: fake-ip
+  fake-ip-range: 198.18.0.1/16
+
+  fake-ip-filter:
+    - "*.lan"
+    - "*.local"
+    - "*.localdomain"
+    - "localhost.ptlogin2.qq.com"
+    - "localhost.sec.qq.com"
+    - "+.pool.ntp.org"
+    - "time.*.com"
+    - "time.*.gov"
+    - "time.*.apple.com"
+    - "ntp.*.com"
+    - "+.ntp.org"
+    - "captive.apple.com"
+    - "+.msftconnecttest.com"
+    - "+.msftncsi.com"
+    - "+.market.xiaomi.com"
+
+  default-nameserver:
+    - 223.5.5.5
+    - 119.29.29.29
+
+  nameserver:
+    - https://dns.alidns.com/dns-query
+    - https://doh.pub/dns-query
+
+# ------------------------------------------------------------
+# rules — MATCH 引用的组名须与 ssr_2_mihomo --group 保持一致
+# ------------------------------------------------------------
+rules:
+  - DOMAIN-SUFFIX,local,DIRECT
+  - IP-CIDR,100.64.0.0/10,DIRECT,no-resolve
+  - IP-CIDR,127.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,10.0.0.0/8,DIRECT,no-resolve
+  - IP-CIDR,172.16.0.0/12,DIRECT,no-resolve
+  - IP-CIDR,192.168.0.0/16,DIRECT,no-resolve
+  - MATCH,PROXY

@@ -5,6 +5,7 @@
 
 # Local runtime config and state
 config/config.yaml
+config/proxies.yaml
 config/cache.db
 data/
 logs/
